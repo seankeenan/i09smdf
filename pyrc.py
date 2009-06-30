@@ -1,3 +1,8 @@
+#
+# some c/ping from wxpython-demo, as in OnNickMenu
+#
+
+
 import wx
 import os
 import portalocker
@@ -18,6 +23,11 @@ EVT_SEND_MESSAGE = wx.PyEventBinder(wx.NewEventType(), 1)
 EVT_NEW_NICKS = wx.PyEventBinder(wx.NewEventType(), 1)
 EVT_REMOVE_NICK = wx.PyEventBinder(wx.NewEventType(), 1)
 
+
+
+################################################################################
+# via http://weblog.patrice.ch/2009/01/05/proper-file-overwrites-in-python.html
+# doesn't work yet...
 if os.name == 'posix':
     # Rely on the atomicity of Posix renames.
     rename = os.rename
@@ -37,6 +47,8 @@ def write2(filename, contents):
         with open(filename_tmp, 'w') as out_file:
             out_file.write(contents)
     rename(filename_tmp, filename)
+# back to our regularly scheduled programming
+################################################################################
 
 class Sock(threading.Thread):
     def __init__(self, servername, username):
@@ -60,7 +72,6 @@ class Sock(threading.Thread):
         msg = True
         #f = open("test.txt", "w")
         #i = 0
-        #s.sendall("USER guessed tolmoon tolsun :Nicholas")
         self.s.sendall("NICK seank7\r\n")
         #USER <username> <hostname> <servername> :<realname>
         self.s.sendall("USER %s %s %s :%s\r\n" % (self.username, self.username, self.username, self.realname ))
@@ -193,6 +204,7 @@ class ChatWindow(wx.Frame):
                 self.nicklist.remove(user)
         
     def OnNickMenu(self, e):
+
         # only do this part the first time so the events are only bound once
         #
         # Yet another anternate way to do IDs. Some prefer them up top to
@@ -228,8 +240,10 @@ class ChatWindow(wx.Frame):
         print "popup one"
         
     def OnTrout(self, e):
-        msg = "I am testing a menu item on %s" % self.nicks.GetStringSelection()
+        msg = "I am testing a menu item on %s" % self.nicks.GetStringSelection() 
         event = wx.PyCommandEvent(EVT_SEND_MESSAGE.typeId, ID_SEND_MESSAGE)
+        # send message should incorporate self.nick
+        ## should add self.nick
         event.SetClientData(msg)
         event = wx.PyCommandEvent(EVT_PRINT_MESSAGE.typeId, ID_PRINT_MESSAGE)
         event.SetClientData(msg)
@@ -303,6 +317,7 @@ class MainWindow(wx.Frame):
             dst = os.path.join(self.dirname,self.filename)
             f = open(dst, "w")
             f.write(self.control['main'].Value)
+            # very possibly an exception at present
             f.close()
         dlg.Destroy()
         
@@ -317,6 +332,7 @@ class MainWindow(wx.Frame):
         dst = os.path.join(self.dirname,self.filename)
         f = open(dst, "w")
         f.write(self.control['main'].Value)
+        # very possibly an exception at present
         f.close()
         
     def OnMessageToPrint(self,e):
