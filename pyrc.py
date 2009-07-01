@@ -3,19 +3,24 @@
 #
 
 
-import wx
+#Python modules
 import os
-import portalocker
 import threading
 import socket
 import identd
+
+#UI modules
+import wx
+
+#Python-IRC modules
+import extras
+
 ID_ABOUT = wx.NewId()
 ID_EXIT = wx.NewId()
 ID_OPEN = wx.NewId()
 ID_SAVE = wx.NewId()
 ID_SAVEAS = wx.NewId()
 
-defaultroom = '#sean'
 # function event drudge
 
 EVT_PRINT_MESSAGE = wx.PyEventBinder(wx.NewEventType(), 1)
@@ -29,29 +34,34 @@ ID_REMOVE_NICK = wx.NewId()
 EVT_JOIN_ROOM = wx.PyEventBinder(wx.NewEventType(), 1)
 ID_JOIN_ROOM = wx.NewId()
 
+#development defaults
+defaultroom = '#sean'
+defaultserver = "irc.afternet.org"
+defaultuser = 'rollybot'
 
 ################################################################################
 # via http://weblog.patrice.ch/2009/01/05/proper-file-overwrites-in-python.html
 # doesn't work yet...
-if os.name == 'posix':
-    # Rely on the atomicity of Posix renames.
-    rename = os.rename
-else:
-    def _rename(src, dst):
-        """Rename the file or directory src to dst. If dst exists and is a
-        file, it will be replaced silently if the user has permission.
-        """
-        if os.path.exists(src) and os.path.isfile(dst):
-            os.remove(dst)
-        os.rename(src, dst)
-
-def write2(filename, contents):
-    filename_tmp = filename + '.TMP'
-    with open(filename_tmp, 'a') as lockfile:
-        portalocker.lock(lockfile, portalocker.LOCK_EX)
-        with open(filename_tmp, 'w') as out_file:
-            out_file.write(contents)
-    rename(filename_tmp, filename)
+#import portalocker
+#if os.name == 'posix':
+#    # Rely on the atomicity of Posix renames.
+#    rename = os.rename
+#else:
+#    def _rename(src, dst):
+#        """Rename the file or directory src to dst. If dst exists and is a
+#        file, it will be replaced silently if the user has permission.
+#        """
+#        if os.path.exists(src) and os.path.isfile(dst):
+#            os.remove(dst)
+#        os.rename(src, dst)
+#
+#def write2(filename, contents):
+#    filename_tmp = filename + '.TMP'
+#    with open(filename_tmp, 'a') as lockfile:
+#        portalocker.lock(lockfile, portalocker.LOCK_EX)
+#        with open(filename_tmp, 'w') as out_file:
+#            out_file.write(contents)
+#    rename(filename_tmp, filename)
 # back to our regularly scheduled programming
 ################################################################################
 
@@ -78,7 +88,7 @@ class Sock(threading.Thread):
         msg = True
         #f = open("test.txt", "w")
         #i = 0
-        self.s.sendall("NICK seank7\r\n")
+        self.s.sendall("NICK %s\r\n" % self.username)
         #USER <username> <hostname> <servername> :<realname>
         self.s.sendall("USER %s %s %s :%s\r\n" % (self.username, self.username, self.username, self.realname ))
         
@@ -98,7 +108,12 @@ class Sock(threading.Thread):
                 event.SetString(msg)
                 frame.GetEventHandler().ProcessEvent(event)
                 #if ("NOTICE AUTH :***" in line):
-                #    
+                
+    def safesend(self, cmd, msg):
+        if len(msg) + len(cmd) < 500:
+            self.s.sendall(cmd + msg + "\r\n")
+        else:
+            print "Your message is too long: %s ..." % msg[:25]
 
     def recvrn(self):
         self.buf += self.s.recv(512)
@@ -115,7 +130,28 @@ class Sock(threading.Thread):
         room = e.GetClientData()
         msg = e.GetString()
         self.s.sendall("PRIVMSG %s :%s\r\n" % (room, msg))
-        
+    
+    def botParse(self, nick, room, msg):
+        #botcommands = {'roll':}
+        if ' ' in msg:
+            cmd, msg = msg.split(' ',1)
+            if cmd.lower() == 'roll':
+                result, valid = extras.roll(msg)
+                report = "%s is rolling %s: %s" % (nick, msg, result)
+                if 'AWESOME!' in report and nick == 'Banano':
+                    report = "Well..."
+                if len(report) > 80:
+                    report = "Seriously, %s? You crazy." % nick
+                printevent = wx.PyCommandEvent(EVT_PRINT_MESSAGE.typeId, ID_PRINT_MESSAGE)
+                printevent.SetString(report)
+                printevent.SetClientData(room)
+                event = wx.PyCommandEvent(EVT_SEND_MESSAGE.typeId, ID_SEND_MESSAGE)
+                event.SetString(report)
+                event.SetClientData(room)
+                frame.sock.handler.ProcessEvent(event)
+                frame.GetEventHandler().ProcessEvent(printevent)
+                return
+
     def parseMessage(self, msg):
         printevent = wx.PyCommandEvent(EVT_PRINT_MESSAGE.typeId, ID_PRINT_MESSAGE)
         user = None
@@ -131,6 +167,7 @@ class Sock(threading.Thread):
         cmd, msg = msg.split(" ", 1)
         if cmd == "PRIVMSG":
             room, msg = msg.split(" ", 1)
+            self.botParse(nick, room, msg[1:])
             printevent.SetString("<" + nick + "> " + msg[1:])
             printevent.SetClientData(room)
             frame.GetEventHandler().ProcessEvent(printevent)
@@ -139,21 +176,22 @@ class Sock(threading.Thread):
             users = users[1:].split(" ")
             nickevent = wx.PyCommandEvent(EVT_NEW_NICKS.typeId, ID_NEW_NICKS)
             nickevent.SetClientData(users)
-            frame.rooms[room].nicks.ProcessEvent(nickevent)
+            frame.rooms[room.lower()].nicks.ProcessEvent(nickevent)
         elif cmd == "JOIN":
             nickevent = wx.PyCommandEvent(EVT_NEW_NICKS.typeId, ID_NEW_NICKS)
             nickevent.SetClientData([nick])
-            frame.rooms[msg].nicks.ProcessEvent(nickevent)
+            frame.rooms[msg.lower()].nicks.ProcessEvent(nickevent)
             printevent.SetString(nick + " has joined %s" % msg)
             printevent.SetClientData(msg)
             frame.GetEventHandler().ProcessEvent(printevent)
         elif cmd == "QUIT":
             printevent.SetString(nick + "quit: (%s)" % msg[1:])
-            printevent.SetClientData(room)
+            print nick, user, host, cmd, msg
+            printevent.SetClientData(room) # quit messages don't have a room...
             frame.GetEventHandler().ProcessEvent(printevent)
             nickevent = wx.PyCommandEvent(EVT_REMOVE_NICK.typeId, ID_REMOVE_NICK)
             nickevent.SetClientData(nick)
-            frame.rooms['#ShantyTown'].nicks.ProcessEvent(nickevent) # TODO: unhax
+            frame.rooms['#shantytown'].nicks.ProcessEvent(nickevent) # TODO: unhax
         else:
             printevent.SetString(nick + " " + cmd + " " + msg)
             frame.GetEventHandler().ProcessEvent(printevent)
@@ -203,7 +241,7 @@ class ChatWindow(wx.Frame):
 
     def process_message(self, e):
         msg = e.GetString()
-        if msg[:6].lower() == "/join ":
+        if msg[:6].lower() == "/join ": # better way to do this? probably. I'll refactor later. FLW.
             event = wx.PyCommandEvent(EVT_JOIN_ROOM.typeId, ID_JOIN_ROOM)
             event.SetString(msg[6:])
             frame.sock.handler.ProcessEvent(event)
@@ -217,6 +255,20 @@ class ChatWindow(wx.Frame):
             frame.GetEventHandler().ProcessEvent(printevent)
             e.GetClientObject().Clear()
             return
+        elif msg[:6].lower() == "/roll ":
+            msg = msg[6:]
+            result, valid = extras.roll(msg)
+            report = "rolling %s: %s" % (msg, result)
+            printevent = wx.PyCommandEvent(EVT_PRINT_MESSAGE.typeId, ID_PRINT_MESSAGE)
+            printevent.SetString(report)
+            printevent.SetClientData(self.roomtitle)
+            event = wx.PyCommandEvent(EVT_SEND_MESSAGE.typeId, ID_SEND_MESSAGE)
+            event.SetString(report)
+            event.SetClientData(self.roomtitle)
+            frame.sock.handler.ProcessEvent(event)
+            frame.GetEventHandler().ProcessEvent(printevent)
+            e.GetClientObject().Clear()
+            return      
         event = wx.PyCommandEvent(EVT_SEND_MESSAGE.typeId, ID_SEND_MESSAGE)
         event.SetString(msg)
         event.SetClientData(self.roomtitle)
@@ -296,8 +348,8 @@ class MainWindow(wx.Frame):
         #self.Bind(EVT_PRINT_MESSAGE, self.OnMessageToPrint)
         
         self.dirname = '' # pseudo unused
-        self.server = "irc.afternet.org"
-        self.username = "seank"
+        self.server = defaultserver 
+        self.username = defaultuser
         
         
         wx.Frame.__init__(self,parent,wx.ID_ANY, title, size = (500, 400), pos = (0, 100))#wx.ID_ANY, title, size = (200,100))
@@ -336,9 +388,10 @@ class MainWindow(wx.Frame):
         self.Bind(EVT_JOIN_ROOM, self.joinRoom)
         
     def joinRoom(self,e):
+        # todo - support Caps in channel names :/ see onMessageToPrint
         room = e.GetString()
-        if room not in self.rooms:
-            self.rooms[room] = ChatWindow(self, wx.ID_ANY, room)
+        if room.lower() not in self.rooms:
+            self.rooms[room.lower()] = ChatWindow(self, wx.ID_ANY, room)
 
     def OnAbout(self,e):
         d= wx.MessageDialog( self, " A sample editor \n"
@@ -391,11 +444,12 @@ class MainWindow(wx.Frame):
         f.close()
         
     def OnMessageToPrint(self,e):
+        #todo - caps in room names - see joinRoom
         msg = e.GetString()
         room = e.GetClientData()
         if room:
             if len(msg):
-                self.rooms[room].room.write("\n" + msg) #err.. rooms room room write? telephone fail :(
+                self.rooms[room.lower()].room.write("\n" + msg) #err.. rooms room room write? telephone fail :(
         else:
             print msg
 
