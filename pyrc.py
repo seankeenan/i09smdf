@@ -36,9 +36,14 @@ EVT_JOIN_ROOM = wx.PyEventBinder(wx.NewEventType(), 1)
 ID_JOIN_ROOM = wx.NewId()
 
 #development defaults
-defaultroom = '#sean'
+#defaultroom = '#sean'
 defaultserver = "irc.afternet.org"
-defaultuser = 'rollybot'
+#defaultuser = 'rollybot'
+defaultroom = '#sean'
+#defaultserver = "niven.freenode.net"
+defaultuser = 'sean7'
+botmode = True
+import pdb
 
 ################################################################################
 # via http://weblog.patrice.ch/2009/01/05/proper-file-overwrites-in-python.html
@@ -103,11 +108,12 @@ class Sock(threading.Thread):
                     #print line
                 if msg[:4] == "PING":
                     self.s.sendall("PONG " + msg[5:] + "\r\n")
-                    self.s.sendall("JOIN %s \r\n" % defaultroom)
+                    #self.s.sendall("JOIN %s \r\n" % defaultroom)
                     continue
-                event = wx.PyCommandEvent(EVT_PRINT_MESSAGE.typeId, ID_PRINT_MESSAGE)
-                event.SetString(msg)
-                frame.GetEventHandler().ProcessEvent(event)
+                printevent = wx.PyCommandEvent(EVT_PRINT_MESSAGE.typeId, ID_PRINT_MESSAGE)
+                printevent.SetString(msg)
+                wx.PostEvent(frame, printevent)
+                #frame.GetEventHandler().ProcessEvent(event)
                 #if ("NOTICE AUTH :***" in line):
                 
     def safesend(self, cmd, msg):
@@ -124,10 +130,7 @@ class Sock(threading.Thread):
 
     def joinRoom(self, e):
         self.s.sendall("JOIN %s \r\n" % e.GetString())
-        print "joining ",
-        print e.GetString(),
-        print e.GetClientData()
-        
+
     def sendMessage(self, e):
         room = e.GetClientData()
         msg = e.GetString()
@@ -148,13 +151,16 @@ class Sock(threading.Thread):
                 event = wx.PyCommandEvent(EVT_SEND_MESSAGE.typeId, ID_SEND_MESSAGE)
                 event.SetString(report)
                 event.SetClientData(room)
-                frame.sock.handler.ProcessEvent(event)
-                frame.GetEventHandler().ProcessEvent(printevent)
+                wx.PostEvent(frame.sock.handler, event)
+                wx.PostEvent(frame, printevent)
+                #frame.sock.handler.ProcessEvent(event)
+                #frame.GetEventHandler().ProcessEvent(printevent)
                 return
 
     def parseMessage(self, msg):
         printevent = wx.PyCommandEvent(EVT_PRINT_MESSAGE.typeId, ID_PRINT_MESSAGE)
         user = None
+        debugmsg = msg
         if msg.find(" ") == -1:
             print "debug? : " + msg
             return
@@ -167,52 +173,80 @@ class Sock(threading.Thread):
         cmd, msg = msg.split(" ", 1)
         if cmd == "PRIVMSG":
             room, msg = msg.split(" ", 1)
-            self.botParse(nick, room, msg[1:])
+            if room == self.username: # whisper
+                room = nick
+                event = wx.PyCommandEvent(EVT_JOIN_ROOM.typeId, ID_JOIN_ROOM)
+                event.SetString(room)
+                wx.PostEvent(frame, event)
+                #frame.GetEventHandler().ProcessEvent(event)
+            if botmode:
+                self.botParse(nick, room, msg[1:])
             printevent.SetString("<" + nick + "> " + msg[1:])
             printevent.SetClientData(room)
-            frame.GetEventHandler().ProcessEvent(printevent)
-        elif cmd == "353":
+            wx.PostEvent(frame, printevent)
+            #frame.GetEventHandler().ProcessEvent(printevent)
+        elif cmd == "353": # RPL_NAMREPLY
             selfnick, equalsign, room, users = msg.split(" ",3)
             users = users[1:].split(" ")
             nickevent = wx.PyCommandEvent(EVT_NEW_NICKS.typeId, ID_NEW_NICKS)
             nickevent.SetClientData(users)
-            frame.rooms[room.lower()].nicks.ProcessEvent(nickevent)
+            wx.PostEvent(frame.rooms[room.lower()].nicks, nickevent)
+            #frame.rooms[room.lower()].nicks.ProcessEvent(nickevent)
         elif cmd == "JOIN":
             nickevent = wx.PyCommandEvent(EVT_NEW_NICKS.typeId, ID_NEW_NICKS)
             nickevent.SetClientData([nick])
-            frame.rooms[msg.lower()].nicks.ProcessEvent(nickevent)
-            printevent.SetString(nick + " has joined %s" % msg)
-            printevent.SetClientData(msg)
-            frame.GetEventHandler().ProcessEvent(printevent)
+            if ':' in msg:
+                msg = msg.replace(':','')
+                event = wx.PyCommandEvent(EVT_JOIN_ROOM.typeId, ID_JOIN_ROOM)
+                event.SetString(msg)
+                #frame.sock.handler.ProcessEvent(event)
+                wx.PostEvent(frame, event)
+                #frame.GetEventHandler().ProcessEvent(event)
+            else:
+                frame.rooms[msg.lower()].nicks.ProcessEvent(nickevent)
+                printevent.SetString(nick + " has joined %s" % msg)
+                printevent.SetClientData(msg)
+                wx.PostEvent(frame, printevent)
+                #frame.GetEventHandler().ProcessEvent(printevent)
         elif cmd == "QUIT":
             printevent.SetString(nick + " quit: (%s)" % msg[1:])
             print nick, user, host, cmd, msg
             printevent.SetClientData(defaultroom) # quit messages don't have a room...
-            frame.GetEventHandler().ProcessEvent(printevent)
+            wx.PostEvent(frame, printevent)
+            #frame.GetEventHandler().ProcessEvent(printevent)
             nickevent = wx.PyCommandEvent(EVT_REMOVE_NICK.typeId, ID_REMOVE_NICK)
             nickevent.SetClientData(nick)
-            frame.rooms[defaultroom].nicks.ProcessEvent(nickevent) # TODO: unhax
+            wx.PostEvent(frame.rooms[defaultroom].nicks, nickevent)
+            #frame.rooms[defaultroom].nicks.ProcessEvent(nickevent)
+        elif cmd == "366": # End of /NAMES list
+            return
         else:
             printevent.SetString(nick + " " + cmd + " " + msg)
-            frame.GetEventHandler().ProcessEvent(printevent)
+            wx.PostEvent(frame, printevent)
+            #frame.GetEventHandler().ProcessEvent(printevent)
     
-#class ChatWindow(wx.Frame):
 class ChatWindow(wx.Panel):
-    def __init__(self, parent, id, title): # id presently unused
+    def __init__(self, parent, id, title):
         global frame
-        #wx.Frame.__init__(self, parent, wx.ID_ANY, title, size = (800, 400), pos = (200, 100))
-        wx.Panel.__init__(self, parent, wx.ID_ANY, name = title, size = (800, 400))#, pos = (200, 100))
-        self.room = wx.TextCtrl(self, 1, style=(wx.TE_MULTILINE | wx.TE_AUTO_URL))
-        self.room.SetEditable(False)
-        self.nicks = wx.ListBox(self, wx.ID_ANY, style=(wx.LB_SORT | wx.LB_NEEDED_SB | wx.LB_SINGLE))
+        wx.Panel.__init__(self, parent, id, name = title, size = (800, 400))#, pos = (200, 100))
+
+        self.room = wx.TextCtrl(self, 1, style=(wx.TE_MULTILINE
+                                                | wx.TE_AUTO_URL
+                                                | wx.TE_READONLY
+                                                | wx.VSCROLL
+                                                | wx.ALWAYS_SHOW_SB
+                                                | wx.TE_RICH))
+        #self.room.SetEditable(False)
+
         self.nicklist = []
+        self.nicks = wx.ListBox(self, wx.ID_ANY, style=(wx.LB_SORT | wx.LB_NEEDED_SB | wx.LB_SINGLE))
         self.nicks.Bind(wx.EVT_RIGHT_UP, self.OnNickMenu)
         self.nicks.Bind(EVT_NEW_NICKS, self.OnNewNicks)
         self.nicks.Bind(EVT_REMOVE_NICK, self.OnRemoveNick)
-        
+
         self.buffer = wx.TextCtrl(self, 2, style=wx.TE_PROCESS_ENTER)
         self.buffer.Bind(wx.EVT_TEXT_ENTER, self.process_message , self.buffer) 
-        
+
         self.sizer2 = wx.BoxSizer(wx.HORIZONTAL)
         self.sizer2.Add(self.room, 9, wx.EXPAND)
         self.sizer2.Add(self.nicks, 0, wx.EXPAND)    
@@ -226,6 +260,14 @@ class ChatWindow(wx.Panel):
         self.Show(True)
         
         self.roomtitle = title
+        
+        self.buffer.Bind(wx.EVT_CHAR, self.OnChar)
+        self.nicks.Bind(wx.EVT_CHAR, self.OnChar)
+        self.room.Bind(wx.EVT_CHAR, self.OnChar)
+
+    def OnChar(self, e):
+        #print e.GetKeyCode(), e.ControlDown()
+        e.Skip()
 
     def private_message(self, msg): # not even used...
         # doing it wrong - should be able to event.settype
@@ -236,7 +278,8 @@ class ChatWindow(wx.Panel):
         printevent = wx.PyCommandEvent(EVT_PRINT_MESSAGE.typeId, ID_PRINT_MESSAGE)
         printevent.SetString(e.GetString())
         printevent.SetClientData(self.roomtitle)
-        frame.GetEventHandler().ProcessEvent(printevent)
+        wx.PostEvent(frame, printevent)
+        #frame.GetEventHandler().ProcessEvent(printevent)
         e.GetClientObject().Clear()
 
     def process_message(self, e):
@@ -244,15 +287,18 @@ class ChatWindow(wx.Panel):
         if msg[:6].lower() == "/join ": # better way to do this? probably. I'll refactor later. FLW.
             event = wx.PyCommandEvent(EVT_JOIN_ROOM.typeId, ID_JOIN_ROOM)
             event.SetString(msg[6:])
-            frame.sock.handler.ProcessEvent(event)
-            frame.GetEventHandler().ProcessEvent(event)
+            wx.PostEvent(frame.sock.handler, event)
+            #frame.sock.handler.ProcessEvent(event)
+            wx.PostEvent(frame, event)
+            #frame.GetEventHandler().ProcessEvent(event)
             # feels wrong, but e.Skip and e.ResumePropagation
             # aren't working as I would expect
             # TRY: trawl wxpy-demo?
             printevent = wx.PyCommandEvent(EVT_PRINT_MESSAGE.typeId, ID_PRINT_MESSAGE)
             printevent.SetString("Joining " + msg[6:])
             printevent.SetClientData(self.roomtitle)
-            frame.GetEventHandler().ProcessEvent(printevent)
+            wx.PostEvent(frame, printevent)
+            #frame.GetEventHandler().ProcessEvent(printevent)
             e.GetClientObject().Clear()
             return
         elif msg[:6].lower() == "/roll ":
@@ -265,19 +311,24 @@ class ChatWindow(wx.Panel):
             event = wx.PyCommandEvent(EVT_SEND_MESSAGE.typeId, ID_SEND_MESSAGE)
             event.SetString(report)
             event.SetClientData(self.roomtitle)
-            frame.sock.handler.ProcessEvent(event)
-            frame.GetEventHandler().ProcessEvent(printevent)
+            wx.PostEvent(frame.sock.handler, event)
+            wx.PostEvent(frame, printevent)
+            #frame.sock.handler.ProcessEvent(event)
+            #frame.GetEventHandler().ProcessEvent(printevent)
             e.GetClientObject().Clear()
-            return      
-        event = wx.PyCommandEvent(EVT_SEND_MESSAGE.typeId, ID_SEND_MESSAGE)
-        event.SetString(msg)
-        event.SetClientData(self.roomtitle)
-        frame.sock.handler.ProcessEvent(event)
-        printevent = wx.PyCommandEvent(EVT_PRINT_MESSAGE.typeId, ID_PRINT_MESSAGE)
-        printevent.SetString("me: " + msg)
-        printevent.SetClientData(self.roomtitle)
-        frame.GetEventHandler().ProcessEvent(printevent)
-        e.GetClientObject().Clear()
+            return
+        elif msg:
+            event = wx.PyCommandEvent(EVT_SEND_MESSAGE.typeId, ID_SEND_MESSAGE)
+            event.SetString(msg)
+            event.SetClientData(self.roomtitle)
+            wx.PostEvent(frame.sock.handler, event)
+            #frame.sock.handler.ProcessEvent(event)
+            printevent = wx.PyCommandEvent(EVT_PRINT_MESSAGE.typeId, ID_PRINT_MESSAGE)
+            printevent.SetString("me: " + msg)
+            printevent.SetClientData(self.roomtitle)
+            wx.PostEvent(frame, printevent)
+            #frame.GetEventHandler().ProcessEvent(printevent)
+            e.GetClientObject().Clear()
 
     def OnNewNicks(self, e):
         for user in e.GetClientData():
@@ -338,26 +389,30 @@ class ChatWindow(wx.Panel):
         printevent = wx.PyCommandEvent(EVT_PRINT_MESSAGE.typeId, ID_PRINT_MESSAGE)
         printevent.SetString(msg)
         printevent.SetClientData(self.roomtitle)
-        frame.GetEventHandler().ProcessEvent(printevent)
-        frame.sock.handler.ProcessEvent(event)
-
+        wx.PostEvent(frame, printevent)
+        wx.PostEvent(frame.sock.handler, event)
+        #frame.GetEventHandler().ProcessEvent(printevent)
+        #frame.sock.handler.ProcessEvent(event)
 
 class TestNB(wx.Notebook):
     def __init__(self, parent, id):
         wx.Notebook.__init__(self, parent, id, #size=(21,21),
-                             style= wx.BK_DEFAULT
+                             style= wx.BK_DEFAULT #| wx.WANTS_CHARS
                              #wx.BK_TOP 
                              #wx.BK_BOTTOM
                              #wx.BK_LEFT
                              #wx.BK_RIGHT
                              # | wx.NB_MULTILINE
                              )
+        self.Bind(wx.EVT_KEY_DOWN, self.OnKeyDown)
 
-
+    def OnKeyDown(self, e):
+        #print e.GetKeyCode()
+        #print "OnChar!"
+        e.Skip()
 
 class MainWindow(wx.Frame):
     def __init__(self,parent,id,title):
-        
         #self.Bind(EVT_PRINT_MESSAGE, self.OnMessageToPrint)
         
         self.dirname = '' # pseudo unused
@@ -394,16 +449,17 @@ class MainWindow(wx.Frame):
         
         self.tabs = TestNB(self, wx.ID_ANY)
         self.tabcount = -1
+
         self.rooms = {}
+        self.tabs.Bind(wx.EVT_CHAR, self.OnChar)
         
-        time.sleep(2)
-        ## ugly c/p code
         event = wx.PyCommandEvent(EVT_JOIN_ROOM.typeId, ID_JOIN_ROOM)
-        event.SetString(defaultroom)
-        self.sock.handler.ProcessEvent(event)
-        self.GetEventHandler().ProcessEvent(event)
-        ## end ugly c/p code
-        
+        event.SetString(self.server)
+        #wx.PostEvent(self.sock.handler, event)
+        wx.PostEvent(self, event)
+        #self.sock.handler.ProcessEvent(event)
+        #self.GetEventHandler().ProcessEvent(event)
+
         #self.rooms[defaultroom] = ChatWindow(self.tabs, wx.ID_ANY, defaultroom)
         #self.rooms[defaultroom].Show()
         #self.tabs.AddPage(self.rooms[defaultroom], defaultroom)
@@ -414,7 +470,10 @@ class MainWindow(wx.Frame):
         menuBar.Append(filemenu,"&File") # Adding the "filemenu" to the  MenuBar
         self.SetMenuBar(menuBar)  # Adding the MenuBar to the Frame content.
         #self.Show(True)
-
+    
+    def OnChar(self, e):
+        print e.GetKeyCode()
+    
     def joinRoom(self,e):
         # todo - support Caps in channel names :/ see onMessageToPrint
         room = e.GetString()
@@ -431,10 +490,10 @@ class MainWindow(wx.Frame):
                            # Create a message dialog box
         d.ShowModal() # Shows it
         d.Destroy() # finally destroy it when finished.
-        
+
     def OnExit(self,e):
         self.Close(True)  # Close the frame.
-        
+
     def OnOpen(self,e):
         """ Open a file"""
         dlg = wx.FileDialog(self, "Choose a file", self.dirname, "", "*.*", wx.OPEN)
@@ -460,7 +519,7 @@ class MainWindow(wx.Frame):
             # very possibly an exception at present
             f.close()
         dlg.Destroy()
-        
+
     def OnSave(self,e):
         """ Save a file
         It is important to note that this is not really a safe method.
@@ -474,19 +533,25 @@ class MainWindow(wx.Frame):
         f.write(self.control['main'].Value)
         # very possibly an exception at present
         f.close()
-        
+
     def OnMessageToPrint(self,e):
         #todo - caps in room names - see joinRoom
         msg = e.GetString()
         room = e.GetClientData()
         if room:
             if len(msg):
-                self.rooms[room.lower()].room.write("\n" + msg) #err.. rooms room room write? telephone fail :(
+                if room.lower() not in self.rooms:
+                    #event = wx.PyCommandEvent(EVT_JOIN_ROOM.typeId, ID_JOIN_ROOM)
+                    #event.SetString(room)
+                    #self.GetEventHandler().ProcessEvent(event)
+                    print room, msg, "Do I get here? FIX!"
+                else:
+                    self.rooms[room.lower()].room.write("\n" + msg) #err.. rooms room room write? telephone fail :(
+                    self.rooms[room.lower()].room.ScrollLines(1)
         else:
-            print msg
+            self.rooms[self.server].room.write("\n" + msg)
+            self.rooms[self.server].room.ScrollLines(1)
 
 app = wx.PySimpleApp()
 frame = MainWindow(None, -1, "Simple client")
-
-
 app.MainLoop()
